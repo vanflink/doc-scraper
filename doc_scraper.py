@@ -1,5 +1,5 @@
 import streamlit as st
-import cloudscraper  # <--- DAS IST NEU
+from curl_cffi import requests as cffi_requests  # <--- DAS IST DIE NEUE WAFFE
 from bs4 import BeautifulSoup
 import pandas as pd
 import time
@@ -31,11 +31,11 @@ if not st.session_state.authenticated:
     st.stop()
 
 # =========================================================
-#  ⬇️ MAIN TOOL (DOC CLOUDSCRAPER VERSION) ⬇️
+#  ⬇️ MAIN TOOL (DOC CURL_CFFI VERSION) ⬇️
 # =========================================================
 
-st.title("➕ Doc Scraper (Anti-Block)")
-st.markdown("Paste your list of PZNs below. Uses advanced evasion to bypass blocks.")
+st.title("➕ Doc Scraper (Chrome Impersonation)")
+st.markdown("Paste your list of PZNs below. Uses browser fingerprinting to bypass strict blocks.")
 
 default_pzns = "40554, 3161577\n18661452"
 col1, col2 = st.columns([1, 2])
@@ -64,17 +64,16 @@ if start_button:
             
         results = []
         
-        # --- HIER IST DER TRICK ---
-        # Wir erstellen einen "Scraper", der sich wie ein echter Browser verhält
-        scraper = cloudscraper.create_scraper() 
+        # Session für bessere Performance und Cookie-Handling
+        session = cffi_requests.Session()
 
         for i, pzn in enumerate(pzns):
             url = f"https://www.docmorris.de/{pzn}"
             status_text.text(f"Fetching PZN {pzn} ({i+1}/{len(pzns)})...")
             
             try:
-                # Wir nutzen jetzt 'scraper.get' statt 'requests.get'
-                response = scraper.get(url, timeout=20)
+                # Hier passiert die Magie: 'impersonate="chrome110"'
+                response = session.get(url, impersonate="chrome110", timeout=20)
                 
                 if response.status_code == 200:
                     soup = BeautifulSoup(response.content, "html.parser")
@@ -108,17 +107,16 @@ if start_button:
                 elif response.status_code == 404:
                     results.append({"PZN": pzn, "Name": "❌ Not found", "Link": url})
                 elif response.status_code == 403:
-                    results.append({"PZN": pzn, "Name": "⛔ Blocked (Try again later)", "Link": url})
+                    results.append({"PZN": pzn, "Name": "⛔ Blocked (WAF active)", "Link": url})
                 else:
                     results.append({"PZN": pzn, "Name": f"Error {response.status_code}", "Link": url})
 
             except Exception as e:
-                # Cloudscraper wirft oft spezifische Fehler, wenn er Cloudflare nicht lösen kann
                 results.append({"PZN": pzn, "Name": "Error", "Link": url, "Marke": str(e)})
             
             progress_bar.progress((i + 1) / len(pzns))
-            # Zufällige Pause, um menschlich zu wirken
-            time.sleep(random.uniform(2.0, 4.0)) 
+            # Kurze Pause ist immer noch gut
+            time.sleep(random.uniform(1.0, 2.5)) 
 
         status_text.text("✅ Finished!")
         
