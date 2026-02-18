@@ -3,7 +3,7 @@ import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 import time
-import random
+import re
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Doc Scraper", page_icon="➕", layout="wide")
@@ -14,7 +14,6 @@ if 'authenticated' not in st.session_state:
 
 def check_password():
     try:
-        # Check App Password
         secret_pw = st.secrets["app_password"]
         if st.session_state.password_input == secret_pw:
             st.session_state.authenticated = True
@@ -22,7 +21,7 @@ def check_password():
         else:
             st.error("❌ Wrong password")
     except Exception:
-        st.error("⚠️ Secrets not configured correctly.")
+        st.error("⚠️ Secrets not configured.")
 
 if not st.session_state.authenticated:
     st.title("🔒 Login Required")
@@ -30,11 +29,11 @@ if not st.session_state.authenticated:
     st.stop()
 
 # =========================================================
-#  ⬇️ MAIN TOOL (FULL DATA VERSION) ⬇️
+#  ⬇️ MAIN TOOL (FULL DATA + HERSTELLER) ⬇️
 # =========================================================
 
-st.title("➕ Doc Scraper (Full Data)")
-st.markdown("Paste your list of PZNs below. Fetches **all** dropdown details via ScraperAPI.")
+st.title("➕ Doc Scraper (Full + Manufacturer)")
+st.markdown("Fetches PZN data including Dropdowns and Manufacturer Info.")
 
 default_pzns = "40554, 3161577\n18661452"
 col1, col2 = st.columns([1, 2])
@@ -44,12 +43,11 @@ with col1:
     start_button = st.button("🚀 Fetch Data", type="primary", use_container_width=True)
 
 def get_text(soup, selector):
-    """Safely extracts text from a soup object based on selector."""
+    """Safely extracts text."""
     if not soup:
         return "n.a."
     element = soup.select_one(selector)
     if element:
-        # get_text with separator handles <br> and <p> tags gracefully
         return element.get_text(strip=True, separator="\n")
     return "n.a."
 
@@ -58,7 +56,7 @@ if start_button:
     try:
         api_key = st.secrets["scraper_api_key"]
     except KeyError:
-        st.error("🚨 API Key missing! Please add 'scraper_api_key' to Streamlit Secrets.")
+        st.error("🚨 API Key missing! Add 'scraper_api_key' to Secrets.")
         st.stop()
 
     normalized_input = pzn_input.replace(',', '\n')
@@ -68,7 +66,7 @@ if start_button:
         st.error("Please enter at least one PZN.")
     else:
         with col2:
-            st.info(f"Processing {len(pzns)} products (Deep Scan)...")
+            st.info(f"Processing {len(pzns)} products...")
             progress_bar = st.progress(0)
             status_text = st.empty()
             
@@ -78,58 +76,57 @@ if start_button:
             target_url = f"https://www.docmorris.de/{pzn}"
             status_text.text(f"Fetching PZN {pzn} ({i+1}/{len(pzns)})...")
             
-            # SCAPERAPI PARAMETERS
-            # render=true ensures dynamic content (dropdowns) is loaded
             payload = {
                 'api_key': api_key,
                 'url': target_url,
-                'render': 'true',  # WICHTIG: Lädt JavaScript für Dropdowns
-                'country_code': 'de', # Surft aus Deutschland
+                'render': 'true', 
+                'country_code': 'de', 
             }
             
             try:
-                # Request via ScraperAPI
                 response = requests.get('http://api.scraperapi.com', params=payload, timeout=90)
                 
                 if response.status_code == 200:
                     soup = BeautifulSoup(response.content, "html.parser")
                     
-                    # --- 1. BASIS DATEN ---
+                    # --- BASIS DATEN ---
                     name = get_text(soup, "h1")
-                    # Bereinigung: "- Jetzt..." entfernen
-                    if " - Jetzt" in name:
-                        name = name.split(" - Jetzt")[0].strip()
+                    if " - Jetzt" in name: name = name.split(" - Jetzt")[0].strip()
+                    brand = get_text(soup, "a.underline.text-neutral-700")
+                    price = get_text(soup, "div.mr-2")
+                    
+                    # --- HERSTELLER LOGIK ---
+                    # 1. Versuche den Namen direkt zu finden (Dein Selektor)
+                    hersteller = get_text(soup, ".text-left.font-semibold span")
+                    
+                    # 2. Adresse suchen (Trick: Suche im gesamten Text nach "Pharmazeutischer Unternehmer")
+                    full_text = soup.get_text(" ", strip=True)
+                    # Suche nach dem Muster: "Pharmazeutischer Unternehmer: [Adresse]"
+                    match = re.search(r"Pharmazeutischer Unternehmer:?\s*(.*?)(?:\.|$)", full_text, re.IGNORECASE)
+                    hersteller_adresse = match.group(1) if match else "Siehe Pflichttext"
 
-                    brand = get_text(soup, "a.underline.text-neutral-700") # Marke
-                    price = get_text(soup, "div.mr-2") # Preis
-                    
-                    # --- 2. DROPDOWNS (Alle Felder aus deiner JSON) ---
-                    # Wir nutzen die IDs, die DocMorris für die Inhalte verwendet
-                    
+                    # Wenn wir oben keinen Hersteller-Namen gefunden haben, nehmen wir die Marke als Fallback
+                    if hersteller == "n.a." and brand != "n.a.":
+                        hersteller = brand
+
+                    # --- DROPDOWNS ---
                     wirkstoffe = get_text(soup, "#Wirkstoffe-content")
-                    if wirkstoffe == "n.a.": wirkstoffe = get_text(soup, "div.p-0.rounded-lg") # Fallback
+                    if wirkstoffe == "n.a.": wirkstoffe = get_text(soup, "div.p-0.rounded-lg")
                     
                     dosierung = get_text(soup, "#Dosierung-content")
                     nebenwirkungen = get_text(soup, "#Nebenwirkungen-content")
                     gegenanzeigen = get_text(soup, "#Gegenanzeigen-content")
-                    hilfsstoffe = get_text(soup, "#Hilfsstoffe-content") # Oft kombiniert als WarnhinweiseHilfsstoffe
+                    hilfsstoffe = get_text(soup, "#Hilfsstoffe-content")
                     warnhinweise = get_text(soup, "#WarnhinweiseHilfsstoffe-content")
                     wechselwirkungen = get_text(soup, "#Wechselwirkungen-content")
                     anwendungsgebiete = get_text(soup, "#Anwendungsgebiete-content")
-                    anwendungshinweise = get_text(soup, "#Anwendungshinweise-content")
-                    patientenhinweise = get_text(soup, "#Patientenhinweise-content")
-                    
-                    # Produktbeschreibung (Oft HTML Content)
                     produktbeschreibung = get_text(soup, "div.innerHtml")
-                    
-                    # Stillzeit
-                    stillzeit = get_text(soup, "#Stillzeit-content")
-                    if stillzeit == "n.a.": stillzeit = get_text(soup, ".rounded-lg span > ul")
 
-                    # Zusammenstellen
                     results.append({
                         "PZN": pzn,
                         "Name": name,
+                        "Hersteller": hersteller,
+                        "Adresse (Fallback)": hersteller_adresse,
                         "Marke": brand,
                         "Preis": price,
                         "Wirkstoffe": wirkstoffe,
@@ -138,12 +135,7 @@ if start_button:
                         "Gegenanzeigen": gegenanzeigen,
                         "Hilfsstoffe": hilfsstoffe,
                         "Warnhinweise": warnhinweise,
-                        "Wechselwirkungen": wechselwirkungen,
-                        "Anwendungsgebiete": anwendungsgebiete,
-                        "Anwendungshinweise": anwendungshinweise,
-                        "Patientenhinweise": patientenhinweise,
-                        "Produktbeschreibung": produktbeschreibung[:1000], # Text begrenzen für CSV
-                        "Stillzeit": stillzeit,
+                        "Produktbeschreibung": produktbeschreibung[:1000],
                         "Link": target_url
                     })
                     
@@ -155,7 +147,7 @@ if start_button:
                     results.append({"PZN": pzn, "Name": f"Error {response.status_code}", "Link": target_url})
 
             except Exception as e:
-                results.append({"PZN": pzn, "Name": "Error", "Link": target_url, "Marke": str(e)})
+                results.append({"PZN": pzn, "Name": "Error", "Link": target_url, "Hersteller": str(e)})
             
             progress_bar.progress((i + 1) / len(pzns))
             time.sleep(0.5) 
@@ -164,17 +156,7 @@ if start_button:
         
         if results:
             df = pd.DataFrame(results)
-            
-            # Alle Spalten definieren
-            cols = [
-                "PZN", "Name", "Marke", "Preis", 
-                "Wirkstoffe", "Dosierung", "Anwendungsgebiete", 
-                "Nebenwirkungen", "Gegenanzeigen", "Wechselwirkungen", 
-                "Warnhinweise", "Hilfsstoffe", "Anwendungshinweise", 
-                "Patientenhinweise", "Stillzeit", "Produktbeschreibung", 
-                "Link"
-            ]
-            # Nur vorhandene Spalten nutzen
+            cols = ["PZN", "Name", "Hersteller", "Adresse (Fallback)", "Marke", "Preis", "Wirkstoffe", "Dosierung", "Anwendungsgebiete", "Nebenwirkungen", "Link"]
             final_cols = [c for c in cols if c in df.columns]
             df = df[final_cols]
             
