@@ -1,5 +1,5 @@
 import streamlit as st
-import requests
+import cloudscraper  # <--- DAS IST NEU
 from bs4 import BeautifulSoup
 import pandas as pd
 import time
@@ -8,24 +8,22 @@ import random
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Doc Scraper", page_icon="➕", layout="wide")
 
-# --- AUTHENTICATION LOGIC (SECURE) ---
+# --- AUTHENTICATION LOGIC ---
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
 
 def check_password():
     try:
-        # Wir holen das Passwort NUR aus den sicheren Einstellungen
         secret_pw = st.secrets["app_password"]
-        
         if st.session_state.password_input == secret_pw:
             st.session_state.authenticated = True
             del st.session_state.password_input
         else:
             st.error("❌ Wrong password")
     except FileNotFoundError:
-        st.error("⚠️ Secrets file not found. Please configure secrets in Streamlit Cloud.")
+        st.error("⚠️ Secrets file not found.")
     except KeyError:
-        st.error("⚠️ Key Error. Make sure 'app_password' is defined in Streamlit Secrets.")
+        st.error("⚠️ Key Error in Secrets.")
 
 if not st.session_state.authenticated:
     st.title("🔒 Login Required")
@@ -33,11 +31,11 @@ if not st.session_state.authenticated:
     st.stop()
 
 # =========================================================
-#  ⬇️ MAIN TOOL (DOC VERSION) ⬇️
+#  ⬇️ MAIN TOOL (DOC CLOUDSCRAPER VERSION) ⬇️
 # =========================================================
 
-st.title("➕ Doc Scraper")
-st.markdown("Paste your list of PZNs below. Fetches details from Doc.")
+st.title("➕ Doc Scraper (Anti-Block)")
+st.markdown("Paste your list of PZNs below. Uses advanced evasion to bypass blocks.")
 
 default_pzns = "40554, 3161577\n18661452"
 col1, col2 = st.columns([1, 2])
@@ -46,7 +44,6 @@ with col1:
     pzn_input = st.text_area("Enter PZNs:", value=default_pzns, height=300)
     start_button = st.button("🚀 Fetch Data", type="primary", use_container_width=True)
 
-# Helper function to safely extract text
 def get_text(soup, selector):
     element = soup.select_one(selector)
     if element:
@@ -67,25 +64,23 @@ if start_button:
             
         results = []
         
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept-Language": "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Referer": "https://www.google.com/"
-        }
+        # --- HIER IST DER TRICK ---
+        # Wir erstellen einen "Scraper", der sich wie ein echter Browser verhält
+        scraper = cloudscraper.create_scraper() 
 
         for i, pzn in enumerate(pzns):
             url = f"https://www.docmorris.de/{pzn}"
             status_text.text(f"Fetching PZN {pzn} ({i+1}/{len(pzns)})...")
             
             try:
-                response = requests.get(url, headers=headers, timeout=15)
+                # Wir nutzen jetzt 'scraper.get' statt 'requests.get'
+                response = scraper.get(url, timeout=20)
                 
                 if response.status_code == 200:
                     soup = BeautifulSoup(response.content, "html.parser")
                     
                     # --- CORE DATA ---
                     name = get_text(soup, "h1")
-                    # Bereinigung: "- Jetzt..." entfernen, falls vorhanden
                     if " - Jetzt" in name:
                         name = name.split(" - Jetzt")[0].strip()
 
@@ -99,9 +94,7 @@ if start_button:
 
                     dosierung = get_text(soup, "#Dosierung-content")
                     nebenwirkungen = get_text(soup, "#Nebenwirkungen-content")
-                    gegenanzeigen = get_text(soup, "#Gegenanzeigen-content")
-                    hilfsstoffe = get_text(soup, "#Hilfsstoffe-content")
-
+                    
                     results.append({
                         "PZN": pzn,
                         "Name": name,
@@ -115,22 +108,22 @@ if start_button:
                 elif response.status_code == 404:
                     results.append({"PZN": pzn, "Name": "❌ Not found", "Link": url})
                 elif response.status_code == 403:
-                    results.append({"PZN": pzn, "Name": "⛔ Blocked", "Link": url})
+                    results.append({"PZN": pzn, "Name": "⛔ Blocked (Try again later)", "Link": url})
                 else:
                     results.append({"PZN": pzn, "Name": f"Error {response.status_code}", "Link": url})
 
             except Exception as e:
+                # Cloudscraper wirft oft spezifische Fehler, wenn er Cloudflare nicht lösen kann
                 results.append({"PZN": pzn, "Name": "Error", "Link": url, "Marke": str(e)})
             
             progress_bar.progress((i + 1) / len(pzns))
-            time.sleep(random.uniform(1.0, 3.0)) 
+            # Zufällige Pause, um menschlich zu wirken
+            time.sleep(random.uniform(2.0, 4.0)) 
 
         status_text.text("✅ Finished!")
         
         if results:
             df = pd.DataFrame(results)
-            
-            # Sort columns
             cols = ["PZN", "Name", "Marke", "Preis", "Wirkstoffe", "Dosierung", "Link"]
             final_cols = [c for c in cols if c in df.columns]
             df = df[final_cols]
