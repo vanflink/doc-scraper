@@ -1,5 +1,5 @@
 import streamlit as st
-from curl_cffi import requests as cffi_requests  # <--- DAS IST DIE NEUE WAFFE
+import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 import time
@@ -14,16 +14,15 @@ if 'authenticated' not in st.session_state:
 
 def check_password():
     try:
+        # Wir prüfen nur das App-Passwort, der API-Key wird später genutzt
         secret_pw = st.secrets["app_password"]
         if st.session_state.password_input == secret_pw:
             st.session_state.authenticated = True
             del st.session_state.password_input
         else:
             st.error("❌ Wrong password")
-    except FileNotFoundError:
-        st.error("⚠️ Secrets file not found.")
-    except KeyError:
-        st.error("⚠️ Key Error in Secrets.")
+    except Exception:
+        st.error("⚠️ Secrets not configured correctly.")
 
 if not st.session_state.authenticated:
     st.title("🔒 Login Required")
@@ -31,11 +30,11 @@ if not st.session_state.authenticated:
     st.stop()
 
 # =========================================================
-#  ⬇️ MAIN TOOL (DOC CURL_CFFI VERSION) ⬇️
+#  ⬇️ MAIN TOOL (SCRAPERAPI VERSION) ⬇️
 # =========================================================
 
-st.title("➕ Doc Scraper (Chrome Impersonation)")
-st.markdown("Paste your list of PZNs below. Uses browser fingerprinting to bypass strict blocks.")
+st.title("➕ Doc Scraper (Pro Proxy)")
+st.markdown("Paste your list of PZNs below. Uses ScraperAPI to bypass WAF blocks.")
 
 default_pzns = "40554, 3161577\n18661452"
 col1, col2 = st.columns([1, 2])
@@ -51,6 +50,13 @@ def get_text(soup, selector):
     return "n.a."
 
 if start_button:
+    # 1. API KEY LADEN
+    try:
+        api_key = st.secrets["scraper_api_key"]
+    except KeyError:
+        st.error("🚨 API Key missing! Please add 'scraper_api_key' to Streamlit Secrets.")
+        st.stop()
+
     normalized_input = pzn_input.replace(',', '\n')
     pzns = [line.strip() for line in normalized_input.split('\n') if line.strip()]
     
@@ -58,28 +64,33 @@ if start_button:
         st.error("Please enter at least one PZN.")
     else:
         with col2:
-            st.info(f"Processing {len(pzns)} products...")
+            st.info(f"Processing {len(pzns)} products via Proxy...")
             progress_bar = st.progress(0)
             status_text = st.empty()
             
         results = []
-        
-        # Session für bessere Performance und Cookie-Handling
-        session = cffi_requests.Session()
 
         for i, pzn in enumerate(pzns):
-            url = f"https://www.docmorris.de/{pzn}"
+            target_url = f"https://www.docmorris.de/{pzn}"
             status_text.text(f"Fetching PZN {pzn} ({i+1}/{len(pzns)})...")
             
+            # Anfrage über ScraperAPI leiten
+            payload = {
+                'api_key': api_key,
+                'url': target_url,
+                'keep_headers': 'true', 
+            }
+            
             try:
-                # Hier passiert die Magie: 'impersonate="chrome110"'
-                response = session.get(url, impersonate="chrome110", timeout=20)
+                # Wir rufen api.scraperapi.com auf, nicht DocMorris direkt
+                response = requests.get('http://api.scraperapi.com', params=payload, timeout=60)
                 
                 if response.status_code == 200:
                     soup = BeautifulSoup(response.content, "html.parser")
                     
-                    # --- CORE DATA ---
+                    # --- DATEN EXTRAHIEREN ---
                     name = get_text(soup, "h1")
+                    # Bereinigung: "- Jetzt..." entfernen
                     if " - Jetzt" in name:
                         name = name.split(" - Jetzt")[0].strip()
 
@@ -101,27 +112,28 @@ if start_button:
                         "Preis": price,
                         "Wirkstoffe": wirkstoffe[:500], 
                         "Dosierung": dosierung[:500],
-                        "Link": url
+                        "Link": target_url
                     })
                     
                 elif response.status_code == 404:
-                    results.append({"PZN": pzn, "Name": "❌ Not found", "Link": url})
+                    results.append({"PZN": pzn, "Name": "❌ Not found", "Link": target_url})
                 elif response.status_code == 403:
-                    results.append({"PZN": pzn, "Name": "⛔ Blocked (WAF active)", "Link": url})
+                    results.append({"PZN": pzn, "Name": "⛔ Blocked (Check API Quota)", "Link": target_url})
                 else:
-                    results.append({"PZN": pzn, "Name": f"Error {response.status_code}", "Link": url})
+                    results.append({"PZN": pzn, "Name": f"Error {response.status_code}", "Link": target_url})
 
             except Exception as e:
-                results.append({"PZN": pzn, "Name": "Error", "Link": url, "Marke": str(e)})
+                results.append({"PZN": pzn, "Name": "Error", "Link": target_url, "Marke": str(e)})
             
             progress_bar.progress((i + 1) / len(pzns))
-            # Kurze Pause ist immer noch gut
-            time.sleep(random.uniform(1.0, 2.5)) 
+            # Kurze Pause reicht, da wir über Proxy gehen
+            time.sleep(0.5) 
 
         status_text.text("✅ Finished!")
         
         if results:
             df = pd.DataFrame(results)
+            # Spalten sortieren
             cols = ["PZN", "Name", "Marke", "Preis", "Wirkstoffe", "Dosierung", "Link"]
             final_cols = [c for c in cols if c in df.columns]
             df = df[final_cols]
