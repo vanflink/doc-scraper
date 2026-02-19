@@ -29,11 +29,11 @@ if not st.session_state.authenticated:
     st.stop()
 
 # =========================================================
-#  ⬇️ MAIN TOOL (CREDIT SAVER MODE) ⬇️
+#  ⬇️ MAIN TOOL (ECO MODE + SMART ADDRESS FINDER) ⬇️
 # =========================================================
 
 st.title("➕ Doc Scraper (Eco Mode)")
-st.markdown("Fetches PZN data via ScraperAPI. Optimized to use only **1 Credit per request**.")
+st.markdown("Fetches PZN data via ScraperAPI (1 Credit/Request) with Smart Address Extraction.")
 
 default_pzns = "40554, 3161577\n18661452"
 col1, col2 = st.columns([1, 2])
@@ -52,7 +52,6 @@ def get_text(soup, selector):
     return "n.a."
 
 if start_button:
-    # 1. LOAD API KEY
     try:
         api_key = st.secrets["scraper_api_key"]
     except KeyError:
@@ -66,7 +65,7 @@ if start_button:
         st.error("Please enter at least one PZN.")
     else:
         with col2:
-            st.info(f"Processing {len(pzns)} products (Eco Mode)...")
+            st.info(f"Processing {len(pzns)} products...")
             progress_bar = st.progress(0)
             status_text = st.empty()
             
@@ -76,12 +75,10 @@ if start_button:
             target_url = f"https://www.docmorris.de/{pzn}"
             status_text.text(f"Fetching PZN {pzn} ({i+1}/{len(pzns)})...")
             
-            # --- CREDIT SAVER PAYLOAD ---
-            # Kein 'render=true' mehr -> Kostet exakt 1 Credit
             payload = {
                 'api_key': api_key,
                 'url': target_url,
-                'country_code': 'de', # Standard Geo-Targeting kostet meist keine extra Credits
+                'country_code': 'de', 
             }
             
             try:
@@ -96,18 +93,34 @@ if start_button:
                     brand = get_text(soup, "a.underline.text-neutral-700")
                     price = get_text(soup, "div.mr-2")
                     
-                    # --- HERSTELLER LOGIK ---
+                    # --- SMARTE HERSTELLER & ADRESS LOGIK ---
                     hersteller = get_text(soup, ".text-left.font-semibold span")
-                    full_text = soup.get_text(" ", strip=True)
-                    match = re.search(r"Pharmazeutischer Unternehmer:?\s*(.*?)(?:\.|$)", full_text, re.IGNORECASE)
-                    hersteller_adresse = match.group(1) if match else "Siehe Pflichttext"
                     if hersteller == "n.a." and brand != "n.a.":
                         hersteller = brand
 
-                    # --- ALLE DROPDOWNS AUSLESEN ---
+                    full_text = soup.get_text(" ", strip=True)
+                    hersteller_adresse = "n.a."
+
+                    # Strategie 1: Pflichttext nach "Pharmazeutischer Unternehmer" durchsuchen
+                    match = re.search(r"(?:Pharmazeutischer Unternehmer|Hersteller|Zulassungsinhaber)[\s:]*(.*?)(?:Telefon|Tel\.|Fax|E-Mail|Stand|Zu Risiken|Diese Packungsbeilage|www\.)", full_text, re.IGNORECASE)
+                    if match:
+                        found_text = match.group(1).strip()
+                        # Plausibilitätsprüfung (Adresse sollte nicht riesig sein)
+                        if 5 < len(found_text) < 150:
+                            hersteller_adresse = found_text
+
+                    # Strategie 2: Falls Strategie 1 fehlschlägt, suche nach dem Namen + PLZ Muster
+                    if hersteller_adresse == "n.a." and hersteller != "n.a.":
+                        # Bereinige den Namen für die Suche
+                        safe_name = re.escape(hersteller)
+                        # Sucht nach dem Namen, gefolgt von einer Straße (optional) und einer 5-stelligen PLZ
+                        match2 = re.search(safe_name + r"[\s,:-]*([A-Za-zäöüß\s\.\-]+\d*\s*,\s*\d{5}\s+[A-Za-zäöüß\.\-]+|\d{5}\s+[A-Za-zäöüß\.\-]+)", full_text)
+                        if match2:
+                            hersteller_adresse = match2.group(1).strip()
+
+                    # --- DROPDOWNS ---
                     wirkstoffe = get_text(soup, "#Wirkstoffe-content")
                     if wirkstoffe == "n.a.": wirkstoffe = get_text(soup, "div.p-0.rounded-lg")
-                    
                     dosierung = get_text(soup, "#Dosierung-content")
                     nebenwirkungen = get_text(soup, "#Nebenwirkungen-content")
                     gegenanzeigen = get_text(soup, "#Gegenanzeigen-content")
@@ -121,12 +134,11 @@ if start_button:
                     if stillzeit == "n.a.": stillzeit = get_text(soup, ".rounded-lg span > ul")
                     produktbeschreibung = get_text(soup, "div.innerHtml")
 
-                    # --- DATEN ZUSAMMENFASSEN ---
                     results.append({
                         "PZN": pzn,
                         "Name": name,
                         "Hersteller": hersteller,
-                        "Adresse (Fallback)": hersteller_adresse,
+                        "Adresse": hersteller_adresse,
                         "Marke": brand,
                         "Preis": price,
                         "Wirkstoffe": wirkstoffe,
@@ -163,7 +175,7 @@ if start_button:
             df = pd.DataFrame(results)
             
             cols = [
-                "PZN", "Name", "Hersteller", "Adresse (Fallback)", "Marke", "Preis", 
+                "PZN", "Name", "Hersteller", "Adresse", "Marke", "Preis", 
                 "Wirkstoffe", "Dosierung", "Anwendungsgebiete", "Anwendungshinweise",
                 "Patientenhinweise", "Nebenwirkungen", "Gegenanzeigen", "Wechselwirkungen",
                 "Warnhinweise", "Hilfsstoffe", "Stillzeit", "Produktbeschreibung", "Link"
