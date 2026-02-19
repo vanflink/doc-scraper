@@ -4,7 +4,7 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import time
 import re
-import json  # <--- NEU: Wichtig für den Röntgenblick in die versteckten Daten
+import json
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Doc Scraper", page_icon="➕", layout="wide")
@@ -30,13 +30,14 @@ if not st.session_state.authenticated:
     st.stop()
 
 # =========================================================
-#  ⬇️ MAIN TOOL (ECO MODE + DEEP ADDRESS SCANNER) ⬇️
+#  ⬇️ MAIN TOOL (ECO MODE + SMART PZN + DEEP SCANNER) ⬇️
 # =========================================================
 
 st.title("➕ Doc Scraper (Eco Mode)")
-st.markdown("Fetches PZN data via ScraperAPI (1 Credit) with Deep JSON Address Scanner.")
+st.markdown("Fetches PZN data via ScraperAPI. Automatically fixes missing leading zeros.")
 
-default_pzns = "40554, 3161577\n18661452"
+# Beispiel für kaputte PZNs ohne Nullen
+default_pzns = "40554, 3161577\n18661452\nPZN: 1234567"
 col1, col2 = st.columns([1, 2])
 
 with col1:
@@ -59,11 +60,26 @@ if start_button:
         st.error("🚨 API Key missing! Add 'scraper_api_key' to Secrets.")
         st.stop()
 
+    # --- SMARTER PZN WASCHGANG ---
     normalized_input = pzn_input.replace(',', '\n')
-    pzns = [line.strip() for line in normalized_input.split('\n') if line.strip()]
+    raw_lines = [line.strip() for line in normalized_input.split('\n') if line.strip()]
+    
+    pzns = []
+    for line in raw_lines:
+        # 1. Wirft alle Buchstaben und Sonderzeichen raus, behält nur Zahlen
+        clean_num = re.sub(r'\D', '', line)
+        
+        if clean_num:
+            # 2. Füllt die Zahl mit führenden Nullen auf exakt 8 Stellen auf
+            padded_pzn = clean_num.zfill(8)
+            pzns.append(padded_pzn)
+            
+    # 3. Duplikate entfernen (aber Reihenfolge beibehalten)
+    pzns = list(dict.fromkeys(pzns))
+    # -----------------------------
     
     if not pzns:
-        st.error("Please enter at least one PZN.")
+        st.error("Please enter at least one valid PZN.")
     else:
         with col2:
             st.info(f"Processing {len(pzns)} products...")
@@ -73,6 +89,7 @@ if start_button:
         results = []
 
         for i, pzn in enumerate(pzns):
+            # Nutzt jetzt die saubere, 8-stellige PZN für den Link
             target_url = f"https://www.docmorris.de/{pzn}"
             status_text.text(f"Fetching PZN {pzn} ({i+1}/{len(pzns)})...")
             
@@ -101,7 +118,7 @@ if start_button:
 
                     hersteller_adresse = "n.a."
 
-                    # Stufe 1: JSON-LD (Die unsichtbaren SEO-Daten für Google)
+                    # Stufe 1: JSON-LD
                     for script in soup.find_all("script", type="application/ld+json"):
                         try:
                             data = json.loads(script.string)
@@ -121,11 +138,10 @@ if start_button:
                         except Exception:
                             pass
 
-                    # Stufe 2: Scannen der raw Backend-Daten (React/Next.js State)
+                    # Stufe 2: React State
                     if hersteller_adresse == "n.a.":
                         for script in soup.find_all("script"):
                             text = script.string or ""
-                            # Suchen nach typischen Adress-Variablen im Code
                             if "postalCode" in text or "zipCode" in text:
                                 street_match = re.search(r'"(?:streetAddress|street|strasse)"\s*:\s*"([^"]+)"', text, re.IGNORECASE)
                                 zip_match = re.search(r'"(?:postalCode|zipCode|zip|plz)"\s*:\s*"([^"]+)"', text, re.IGNORECASE)
@@ -136,13 +152,12 @@ if start_button:
                                     hersteller_adresse = f"{street}, {zip_match.group(1)} {city_match.group(1)}".strip(" ,")
                                     break
 
-                    # Stufe 3: Letzter Fallback über Text-Regex
+                    # Stufe 3: Fallback Regex
                     if hersteller_adresse == "n.a.":
                         full_text = soup.get_text(" ", strip=True)
                         match = re.search(r"(?:Pharmazeutischer Unternehmer|Hersteller)[\s:]*(.*?)(?:Telefon|Tel\.|Fax|E-Mail|Stand|Zu Risiken|www\.)", full_text, re.IGNORECASE)
                         if match and 5 < len(match.group(1).strip()) < 150:
                             hersteller_adresse = match.group(1).strip()
-
 
                     # --- DROPDOWNS ---
                     wirkstoffe = get_text(soup, "#Wirkstoffe-content")
@@ -161,7 +176,7 @@ if start_button:
                     produktbeschreibung = get_text(soup, "div.innerHtml")
 
                     results.append({
-                        "PZN": pzn,
+                        "PZN": pzn,  # Speichert die saubere, 8-stellige PZN
                         "Name": name,
                         "Hersteller": hersteller,
                         "Adresse": hersteller_adresse,
