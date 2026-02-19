@@ -4,6 +4,7 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import time
 import re
+import json  # <--- NEU: Wichtig für den Röntgenblick in die versteckten Daten
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Doc Scraper", page_icon="➕", layout="wide")
@@ -29,11 +30,11 @@ if not st.session_state.authenticated:
     st.stop()
 
 # =========================================================
-#  ⬇️ MAIN TOOL (ECO MODE + SMART ADDRESS FINDER) ⬇️
+#  ⬇️ MAIN TOOL (ECO MODE + DEEP ADDRESS SCANNER) ⬇️
 # =========================================================
 
 st.title("➕ Doc Scraper (Eco Mode)")
-st.markdown("Fetches PZN data via ScraperAPI (1 Credit/Request) with Smart Address Extraction.")
+st.markdown("Fetches PZN data via ScraperAPI (1 Credit) with Deep JSON Address Scanner.")
 
 default_pzns = "40554, 3161577\n18661452"
 col1, col2 = st.columns([1, 2])
@@ -93,30 +94,55 @@ if start_button:
                     brand = get_text(soup, "a.underline.text-neutral-700")
                     price = get_text(soup, "div.mr-2")
                     
-                    # --- SMARTE HERSTELLER & ADRESS LOGIK ---
+                    # --- HERSTELLER & TIEFENSAN FÜR ADRESSE ---
                     hersteller = get_text(soup, ".text-left.font-semibold span")
                     if hersteller == "n.a." and brand != "n.a.":
                         hersteller = brand
 
-                    full_text = soup.get_text(" ", strip=True)
                     hersteller_adresse = "n.a."
 
-                    # Strategie 1: Pflichttext nach "Pharmazeutischer Unternehmer" durchsuchen
-                    match = re.search(r"(?:Pharmazeutischer Unternehmer|Hersteller|Zulassungsinhaber)[\s:]*(.*?)(?:Telefon|Tel\.|Fax|E-Mail|Stand|Zu Risiken|Diese Packungsbeilage|www\.)", full_text, re.IGNORECASE)
-                    if match:
-                        found_text = match.group(1).strip()
-                        # Plausibilitätsprüfung (Adresse sollte nicht riesig sein)
-                        if 5 < len(found_text) < 150:
-                            hersteller_adresse = found_text
+                    # Stufe 1: JSON-LD (Die unsichtbaren SEO-Daten für Google)
+                    for script in soup.find_all("script", type="application/ld+json"):
+                        try:
+                            data = json.loads(script.string)
+                            items = data if isinstance(data, list) else [data]
+                            for item in items:
+                                if "Product" in item.get("@type", ""):
+                                    manuf = item.get("manufacturer", {})
+                                    if isinstance(manuf, dict):
+                                        addr = manuf.get("address", {})
+                                        if isinstance(addr, dict):
+                                            street = addr.get("streetAddress", "")
+                                            zip_code = addr.get("postalCode", "")
+                                            city = addr.get("addressLocality", "")
+                                            if zip_code or city:
+                                                hersteller_adresse = f"{street}, {zip_code} {city}".strip(" ,")
+                                                break
+                        except Exception:
+                            pass
 
-                    # Strategie 2: Falls Strategie 1 fehlschlägt, suche nach dem Namen + PLZ Muster
-                    if hersteller_adresse == "n.a." and hersteller != "n.a.":
-                        # Bereinige den Namen für die Suche
-                        safe_name = re.escape(hersteller)
-                        # Sucht nach dem Namen, gefolgt von einer Straße (optional) und einer 5-stelligen PLZ
-                        match2 = re.search(safe_name + r"[\s,:-]*([A-Za-zäöüß\s\.\-]+\d*\s*,\s*\d{5}\s+[A-Za-zäöüß\.\-]+|\d{5}\s+[A-Za-zäöüß\.\-]+)", full_text)
-                        if match2:
-                            hersteller_adresse = match2.group(1).strip()
+                    # Stufe 2: Scannen der raw Backend-Daten (React/Next.js State)
+                    if hersteller_adresse == "n.a.":
+                        for script in soup.find_all("script"):
+                            text = script.string or ""
+                            # Suchen nach typischen Adress-Variablen im Code
+                            if "postalCode" in text or "zipCode" in text:
+                                street_match = re.search(r'"(?:streetAddress|street|strasse)"\s*:\s*"([^"]+)"', text, re.IGNORECASE)
+                                zip_match = re.search(r'"(?:postalCode|zipCode|zip|plz)"\s*:\s*"([^"]+)"', text, re.IGNORECASE)
+                                city_match = re.search(r'"(?:addressLocality|city|ort)"\s*:\s*"([^"]+)"', text, re.IGNORECASE)
+                                
+                                if zip_match and city_match:
+                                    street = street_match.group(1) if street_match else ""
+                                    hersteller_adresse = f"{street}, {zip_match.group(1)} {city_match.group(1)}".strip(" ,")
+                                    break
+
+                    # Stufe 3: Letzter Fallback über Text-Regex
+                    if hersteller_adresse == "n.a.":
+                        full_text = soup.get_text(" ", strip=True)
+                        match = re.search(r"(?:Pharmazeutischer Unternehmer|Hersteller)[\s:]*(.*?)(?:Telefon|Tel\.|Fax|E-Mail|Stand|Zu Risiken|www\.)", full_text, re.IGNORECASE)
+                        if match and 5 < len(match.group(1).strip()) < 150:
+                            hersteller_adresse = match.group(1).strip()
+
 
                     # --- DROPDOWNS ---
                     wirkstoffe = get_text(soup, "#Wirkstoffe-content")
