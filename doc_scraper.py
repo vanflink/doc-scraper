@@ -29,11 +29,11 @@ if not st.session_state.authenticated:
     st.stop()
 
 # =========================================================
-#  ⬇️ MAIN TOOL (FULL DATA + HERSTELLER FIXED) ⬇️
+#  ⬇️ MAIN TOOL (CREDIT SAVER MODE) ⬇️
 # =========================================================
 
-st.title("➕ Doc Scraper (Full + Manufacturer)")
-st.markdown("Fetches PZN data including ALL Dropdowns and Manufacturer Info.")
+st.title("➕ Doc Scraper (Eco Mode)")
+st.markdown("Fetches PZN data via ScraperAPI. Optimized to use only **1 Credit per request**.")
 
 default_pzns = "40554, 3161577\n18661452"
 col1, col2 = st.columns([1, 2])
@@ -66,7 +66,7 @@ if start_button:
         st.error("Please enter at least one PZN.")
     else:
         with col2:
-            st.info(f"Processing {len(pzns)} products...")
+            st.info(f"Processing {len(pzns)} products (Eco Mode)...")
             progress_bar = st.progress(0)
             status_text = st.empty()
             
@@ -76,15 +76,16 @@ if start_button:
             target_url = f"https://www.docmorris.de/{pzn}"
             status_text.text(f"Fetching PZN {pzn} ({i+1}/{len(pzns)})...")
             
+            # --- CREDIT SAVER PAYLOAD ---
+            # Kein 'render=true' mehr -> Kostet exakt 1 Credit
             payload = {
                 'api_key': api_key,
                 'url': target_url,
-                'render': 'true', 
-                'country_code': 'de', 
+                'country_code': 'de', # Standard Geo-Targeting kostet meist keine extra Credits
             }
             
             try:
-                response = requests.get('http://api.scraperapi.com', params=payload, timeout=90)
+                response = requests.get('http://api.scraperapi.com', params=payload, timeout=60)
                 
                 if response.status_code == 200:
                     soup = BeautifulSoup(response.content, "html.parser")
@@ -120,7 +121,7 @@ if start_button:
                     if stillzeit == "n.a.": stillzeit = get_text(soup, ".rounded-lg span > ul")
                     produktbeschreibung = get_text(soup, "div.innerHtml")
 
-                    # --- ALLE DATEN IN DAS WÖRTERBUCH PACKEN ---
+                    # --- DATEN ZUSAMMENFASSEN ---
                     results.append({
                         "PZN": pzn,
                         "Name": name,
@@ -161,7 +162,6 @@ if start_button:
         if results:
             df = pd.DataFrame(results)
             
-            # --- DER FIX: ALLE SPALTEN HIER EXPLIZIT AUFLISTEN ---
             cols = [
                 "PZN", "Name", "Hersteller", "Adresse (Fallback)", "Marke", "Preis", 
                 "Wirkstoffe", "Dosierung", "Anwendungsgebiete", "Anwendungshinweise",
@@ -175,4 +175,4 @@ if start_button:
             st.dataframe(df, use_container_width=True)
             
             csv = df.to_csv(index=False, sep=";", encoding="utf-8-sig").encode('utf-8-sig')
-            st.download_button(label="💾 Download CSV", data=csv, file_name="doc_full_export.csv", mime="text/csv")
+            st.download_button(label="💾 Download CSV", data=csv, file_name="doc_eco_export.csv", mime="text/csv")
