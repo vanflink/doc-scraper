@@ -34,7 +34,7 @@ if not st.session_state.authenticated:
 # =========================================================
 
 st.title("➕ Doc Scraper (Eco Mode)")
-st.markdown("Fetches PZN data via ScraperAPI. Missing data will be left blank.")
+st.markdown("Fetches PZN data via ScraperAPI. Missing data will be completely blank.")
 
 default_pzns = "40554, 3161577\n18661452"
 col1, col2 = st.columns([1, 2])
@@ -203,6 +203,9 @@ if start_button:
         
         if results:
             df = pd.DataFrame(results)
+            
+            # --- DIE ZAUBERZEILE: Macht alle Pandas "NaN" und "None" zu leeren Feldern ---
+            df = df.fillna("")
             
             cols = [
                 "PZN", "Name", "Hersteller", "Adresse", "Marke", "Preis", 
