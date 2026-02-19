@@ -29,11 +29,11 @@ if not st.session_state.authenticated:
     st.stop()
 
 # =========================================================
-#  ⬇️ MAIN TOOL (FULL DATA + HERSTELLER) ⬇️
+#  ⬇️ MAIN TOOL (FULL DATA + HERSTELLER FIXED) ⬇️
 # =========================================================
 
 st.title("➕ Doc Scraper (Full + Manufacturer)")
-st.markdown("Fetches PZN data including Dropdowns and Manufacturer Info.")
+st.markdown("Fetches PZN data including ALL Dropdowns and Manufacturer Info.")
 
 default_pzns = "40554, 3161577\n18661452"
 col1, col2 = st.columns([1, 2])
@@ -96,20 +96,14 @@ if start_button:
                     price = get_text(soup, "div.mr-2")
                     
                     # --- HERSTELLER LOGIK ---
-                    # 1. Versuche den Namen direkt zu finden (Dein Selektor)
                     hersteller = get_text(soup, ".text-left.font-semibold span")
-                    
-                    # 2. Adresse suchen (Trick: Suche im gesamten Text nach "Pharmazeutischer Unternehmer")
                     full_text = soup.get_text(" ", strip=True)
-                    # Suche nach dem Muster: "Pharmazeutischer Unternehmer: [Adresse]"
                     match = re.search(r"Pharmazeutischer Unternehmer:?\s*(.*?)(?:\.|$)", full_text, re.IGNORECASE)
                     hersteller_adresse = match.group(1) if match else "Siehe Pflichttext"
-
-                    # Wenn wir oben keinen Hersteller-Namen gefunden haben, nehmen wir die Marke als Fallback
                     if hersteller == "n.a." and brand != "n.a.":
                         hersteller = brand
 
-                    # --- DROPDOWNS ---
+                    # --- ALLE DROPDOWNS AUSLESEN ---
                     wirkstoffe = get_text(soup, "#Wirkstoffe-content")
                     if wirkstoffe == "n.a.": wirkstoffe = get_text(soup, "div.p-0.rounded-lg")
                     
@@ -120,8 +114,13 @@ if start_button:
                     warnhinweise = get_text(soup, "#WarnhinweiseHilfsstoffe-content")
                     wechselwirkungen = get_text(soup, "#Wechselwirkungen-content")
                     anwendungsgebiete = get_text(soup, "#Anwendungsgebiete-content")
+                    anwendungshinweise = get_text(soup, "#Anwendungshinweise-content")
+                    patientenhinweise = get_text(soup, "#Patientenhinweise-content")
+                    stillzeit = get_text(soup, "#Stillzeit-content")
+                    if stillzeit == "n.a.": stillzeit = get_text(soup, ".rounded-lg span > ul")
                     produktbeschreibung = get_text(soup, "div.innerHtml")
 
+                    # --- ALLE DATEN IN DAS WÖRTERBUCH PACKEN ---
                     results.append({
                         "PZN": pzn,
                         "Name": name,
@@ -131,10 +130,15 @@ if start_button:
                         "Preis": price,
                         "Wirkstoffe": wirkstoffe,
                         "Dosierung": dosierung,
+                        "Anwendungsgebiete": anwendungsgebiete,
+                        "Anwendungshinweise": anwendungshinweise,
+                        "Patientenhinweise": patientenhinweise,
                         "Nebenwirkungen": nebenwirkungen,
                         "Gegenanzeigen": gegenanzeigen,
-                        "Hilfsstoffe": hilfsstoffe,
+                        "Wechselwirkungen": wechselwirkungen,
                         "Warnhinweise": warnhinweise,
+                        "Hilfsstoffe": hilfsstoffe,
+                        "Stillzeit": stillzeit,
                         "Produktbeschreibung": produktbeschreibung[:1000],
                         "Link": target_url
                     })
@@ -156,7 +160,14 @@ if start_button:
         
         if results:
             df = pd.DataFrame(results)
-            cols = ["PZN", "Name", "Hersteller", "Adresse (Fallback)", "Marke", "Preis", "Wirkstoffe", "Dosierung", "Anwendungsgebiete", "Nebenwirkungen", "Link"]
+            
+            # --- DER FIX: ALLE SPALTEN HIER EXPLIZIT AUFLISTEN ---
+            cols = [
+                "PZN", "Name", "Hersteller", "Adresse (Fallback)", "Marke", "Preis", 
+                "Wirkstoffe", "Dosierung", "Anwendungsgebiete", "Anwendungshinweise",
+                "Patientenhinweise", "Nebenwirkungen", "Gegenanzeigen", "Wechselwirkungen",
+                "Warnhinweise", "Hilfsstoffe", "Stillzeit", "Produktbeschreibung", "Link"
+            ]
             final_cols = [c for c in cols if c in df.columns]
             df = df[final_cols]
             
