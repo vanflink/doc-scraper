@@ -30,14 +30,13 @@ if not st.session_state.authenticated:
     st.stop()
 
 # =========================================================
-#  ⬇️ MAIN TOOL (ECO MODE + SMART PZN + DEEP SCANNER) ⬇️
+#  ⬇️ MAIN TOOL (ECO MODE + CLEAN EXPORT) ⬇️
 # =========================================================
 
 st.title("➕ Doc Scraper (Eco Mode)")
-st.markdown("Fetches PZN data via ScraperAPI. Automatically fixes missing leading zeros.")
+st.markdown("Fetches PZN data via ScraperAPI. Missing data will be completely blank.")
 
-# Beispiel für kaputte PZNs ohne Nullen
-default_pzns = "40554, 3161577\n18661452\nPZN: 1234567"
+default_pzns = "40554, 3161577\n18661452"
 col1, col2 = st.columns([1, 2])
 
 with col1:
@@ -45,13 +44,13 @@ with col1:
     start_button = st.button("🚀 Fetch Data", type="primary", use_container_width=True)
 
 def get_text(soup, selector):
-    """Safely extracts text."""
+    """Safely extracts text. Returns empty string if not found."""
     if not soup:
-        return "n.a."
+        return ""
     element = soup.select_one(selector)
     if element:
         return element.get_text(strip=True, separator="\n")
-    return "n.a."
+    return ""
 
 if start_button:
     try:
@@ -60,23 +59,17 @@ if start_button:
         st.error("🚨 API Key missing! Add 'scraper_api_key' to Secrets.")
         st.stop()
 
-    # --- SMARTER PZN WASCHGANG ---
     normalized_input = pzn_input.replace(',', '\n')
     raw_lines = [line.strip() for line in normalized_input.split('\n') if line.strip()]
     
     pzns = []
     for line in raw_lines:
-        # 1. Wirft alle Buchstaben und Sonderzeichen raus, behält nur Zahlen
         clean_num = re.sub(r'\D', '', line)
-        
         if clean_num:
-            # 2. Füllt die Zahl mit führenden Nullen auf exakt 8 Stellen auf
             padded_pzn = clean_num.zfill(8)
             pzns.append(padded_pzn)
             
-    # 3. Duplikate entfernen (aber Reihenfolge beibehalten)
     pzns = list(dict.fromkeys(pzns))
-    # -----------------------------
     
     if not pzns:
         st.error("Please enter at least one valid PZN.")
@@ -89,7 +82,6 @@ if start_button:
         results = []
 
         for i, pzn in enumerate(pzns):
-            # Nutzt jetzt die saubere, 8-stellige PZN für den Link
             target_url = f"https://www.docmorris.de/{pzn}"
             status_text.text(f"Fetching PZN {pzn} ({i+1}/{len(pzns)})...")
             
@@ -111,14 +103,13 @@ if start_button:
                     brand = get_text(soup, "a.underline.text-neutral-700")
                     price = get_text(soup, "div.mr-2")
                     
-                    # --- HERSTELLER & TIEFENSAN FÜR ADRESSE ---
+                    # --- HERSTELLER & ADRESSE ---
                     hersteller = get_text(soup, ".text-left.font-semibold span")
-                    if hersteller == "n.a." and brand != "n.a.":
+                    if hersteller == "" and brand != "":
                         hersteller = brand
 
-                    hersteller_adresse = "n.a."
+                    hersteller_adresse = ""
 
-                    # Stufe 1: JSON-LD
                     for script in soup.find_all("script", type="application/ld+json"):
                         try:
                             data = json.loads(script.string)
@@ -138,8 +129,7 @@ if start_button:
                         except Exception:
                             pass
 
-                    # Stufe 2: React State
-                    if hersteller_adresse == "n.a.":
+                    if hersteller_adresse == "":
                         for script in soup.find_all("script"):
                             text = script.string or ""
                             if "postalCode" in text or "zipCode" in text:
@@ -152,8 +142,7 @@ if start_button:
                                     hersteller_adresse = f"{street}, {zip_match.group(1)} {city_match.group(1)}".strip(" ,")
                                     break
 
-                    # Stufe 3: Fallback Regex
-                    if hersteller_adresse == "n.a.":
+                    if hersteller_adresse == "":
                         full_text = soup.get_text(" ", strip=True)
                         match = re.search(r"(?:Pharmazeutischer Unternehmer|Hersteller)[\s:]*(.*?)(?:Telefon|Tel\.|Fax|E-Mail|Stand|Zu Risiken|www\.)", full_text, re.IGNORECASE)
                         if match and 5 < len(match.group(1).strip()) < 150:
@@ -161,7 +150,7 @@ if start_button:
 
                     # --- DROPDOWNS ---
                     wirkstoffe = get_text(soup, "#Wirkstoffe-content")
-                    if wirkstoffe == "n.a.": wirkstoffe = get_text(soup, "div.p-0.rounded-lg")
+                    if wirkstoffe == "": wirkstoffe = get_text(soup, "div.p-0.rounded-lg")
                     dosierung = get_text(soup, "#Dosierung-content")
                     nebenwirkungen = get_text(soup, "#Nebenwirkungen-content")
                     gegenanzeigen = get_text(soup, "#Gegenanzeigen-content")
@@ -172,11 +161,11 @@ if start_button:
                     anwendungshinweise = get_text(soup, "#Anwendungshinweise-content")
                     patientenhinweise = get_text(soup, "#Patientenhinweise-content")
                     stillzeit = get_text(soup, "#Stillzeit-content")
-                    if stillzeit == "n.a.": stillzeit = get_text(soup, ".rounded-lg span > ul")
+                    if stillzeit == "": stillzeit = get_text(soup, ".rounded-lg span > ul")
                     produktbeschreibung = get_text(soup, "div.innerHtml")
 
                     results.append({
-                        "PZN": pzn,  # Speichert die saubere, 8-stellige PZN
+                        "PZN": pzn,
                         "Name": name,
                         "Hersteller": hersteller,
                         "Adresse": hersteller_adresse,
@@ -215,6 +204,9 @@ if start_button:
         if results:
             df = pd.DataFrame(results)
             
+            # --- DIE ZAUBERZEILE: Macht alle Pandas "NaN" und "None" zu leeren Feldern ---
+            df = df.fillna("")
+            
             cols = [
                 "PZN", "Name", "Hersteller", "Adresse", "Marke", "Preis", 
                 "Wirkstoffe", "Dosierung", "Anwendungsgebiete", "Anwendungshinweise",
@@ -228,4 +220,4 @@ if start_button:
             st.dataframe(df, use_container_width=True)
             
             csv = df.to_csv(index=False, sep=";", encoding="utf-8-sig").encode('utf-8-sig')
-            st.download_button(label="💾 Download CSV", data=csv, file_name="doc_eco_export.csv", mime="text/csv")
+            st.download_button(label="💾 Download CSV", data=csv, file_name="doc_clean_export.csv", mime="text/csv")
