@@ -5,8 +5,6 @@ import pandas as pd
 import time
 import re
 import json
-import gspread
-from google.oauth2.service_account import Credentials
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Doc Scraper", page_icon="➕", layout="wide")
@@ -85,10 +83,18 @@ if start_button:
 
         for i, pzn in enumerate(pzns):
             target_url = f"https://www.docmorris.de/{pzn}"
-            # NEU: Bild URL generieren
-            bild_url = f"https://login.apopixx.de/media/image/web/750/web_schraeg/{pzn}.jpg"
-            
             status_text.text(f"Fetching PZN {pzn} ({i+1}/{len(pzns)})...")
+            
+            # --- BILD URL GENERIEREN & PRÜFEN ---
+            bild_url = f"https://login.apopixx.de/media/image/web/750/web_schraeg/{pzn}.jpg"
+            try:
+                # Wir machen nur einen HEAD-Request (lädt nicht das ganze Bild, checkt nur ob es existiert)
+                img_response = requests.head(bild_url, timeout=5)
+                if img_response.status_code != 200:
+                    bild_url = "" # Wenn das Bild nicht existiert, Feld leer lassen
+            except Exception:
+                bild_url = "" # Bei Fehlern (z.B. Timeout) ebenfalls leer lassen
+
             
             payload = {
                 'api_key': api_key,
@@ -188,7 +194,7 @@ if start_button:
                         "Stillzeit": stillzeit,
                         "Produktbeschreibung": produktbeschreibung[:1000],
                         "Link": target_url,
-                        "Bild-Link": bild_url # NEU HINZUGEFÜGT
+                        "Bild-Link": bild_url
                     })
                     
                 elif response.status_code == 404:
@@ -199,7 +205,7 @@ if start_button:
                     results.append({"PZN": pzn, "Name": f"Error {response.status_code}", "Link": target_url, "Bild-Link": bild_url})
 
             except Exception as e:
-                results.append({"PZN": pzn, "Name": "Error", "Link": target_url, "Bild-Link": bild_url, "Hersteller": str(e)})
+                results.append({"PZN": pzn, "Name": "Error", "Link": target_url, "Hersteller": str(e), "Bild-Link": bild_url})
             
             progress_bar.progress((i + 1) / len(pzns))
             time.sleep(0.5) 
@@ -212,7 +218,6 @@ if start_button:
             # --- DIE ZAUBERZEILE: Macht alle Pandas "NaN" und "None" zu leeren Feldern ---
             df = df.fillna("")
             
-            # NEU: "Bild-Link" in die Spalten aufgenommen
             cols = [
                 "PZN", "Name", "Hersteller", "Adresse", "Marke", "Preis", 
                 "Wirkstoffe", "Dosierung", "Anwendungsgebiete", "Anwendungshinweise",
@@ -222,39 +227,8 @@ if start_button:
             final_cols = [c for c in cols if c in df.columns]
             df = df[final_cols]
             
-            # Speichere df in der Session State, damit es für den GSheets Upload verfügbar bleibt
-            st.session_state.final_df = df
+            st.divider()
+            st.dataframe(df, use_container_width=True)
             
-if 'final_df' in st.session_state:
-    df = st.session_state.final_df
-    
-    st.divider()
-    st.dataframe(df, use_container_width=True)
-    
-    col_dl, col_gs = st.columns(2)
-    
-    with col_dl:
-        csv = df.to_csv(index=False, sep=";", encoding="utf-8-sig").encode('utf-8-sig')
-        st.download_button(label="💾 Download CSV", data=csv, file_name="doc_clean_export.csv", mime="text/csv", use_container_width=True)
-        
-    with col_gs:
-        # --- GOOGLE SHEETS EXPORT LOGIC ---
-        if st.button("📤 In Google Sheets überschreiben", type="secondary", use_container_width=True):
-            try:
-                # 1. Credentials aus Streamlit Secrets laden
-                scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-                creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
-                client = gspread.authorize(creds)
-                
-                # 2. Sheet ID aus deiner URL
-                sheet_id = "1yI0VVb1iNy0KkP4b8wVOFuWT08gWxgC75p1uZKIgAMI"
-                sheet = client.open_by_key(sheet_id).sheet1 # Nimmt das erste Tabellenblatt
-                
-                # 3. Daten überschreiben (Zuerst alles löschen, dann Headers + Rows einfügen)
-                sheet.clear()
-                sheet.update([df.columns.values.tolist()] + df.values.tolist())
-                
-                st.success("✅ Google Sheet erfolgreich aktualisiert!")
-            except Exception as e:
-                st.error(f"❌ Fehler beim Upload: {e}")
-                st.info("Hast du die `gcp_service_account` Secrets hinterlegt und das Sheet für die Service-Mail freigegeben?")
+            csv = df.to_csv(index=False, sep=";", encoding="utf-8-sig").encode('utf-8-sig')
+            st.download_button(label="💾 Download CSV", data=csv, file_name="doc_clean_export.csv", mime="text/csv")
