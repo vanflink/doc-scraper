@@ -82,7 +82,12 @@ if start_button:
             status_text = st.empty()
             
         results = []
-        images_to_zip = {} # NEU: Hier sammeln wir die heruntergeladenen Bilder
+        images_to_zip = {}
+
+        # Browser-Tarnung für den Bilder-Download
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
 
         for i, pzn in enumerate(pzns):
             target_url = f"https://www.docmorris.de/{pzn}"
@@ -90,16 +95,20 @@ if start_button:
             
             # --- BILD URL GENERIEREN & BILD HERUNTERLADEN ---
             bild_url = f"https://login.apopixx.de/media/image/web/750/web_schraeg/{pzn}.jpg"
+            bild_status = "Fehlt" # Standardwert für unsere Tabelle
+            
             try:
-                # Wir machen einen echten GET-Request, um das Bild zu laden
-                img_response = requests.get(bild_url, timeout=10)
+                # Mit getarntem Header anfragen
+                img_response = requests.get(bild_url, headers=headers, timeout=10)
                 if img_response.status_code == 200:
-                    # Bild im Arbeitsspeicher für die spätere ZIP-Datei ablegen
                     images_to_zip[f"{pzn}.jpg"] = img_response.content
+                    bild_status = bild_url # Wenn erfolgreich, URL in die Tabelle packen
+                elif img_response.status_code == 404:
+                    bild_status = "Nicht gefunden (404)"
                 else:
-                    bild_url = "" # Wenn das Bild nicht existiert, Feld in CSV leer lassen
-            except Exception:
-                bild_url = "" # Bei Fehlern ebenfalls leer lassen
+                    bild_status = f"Blockiert/Fehler ({img_response.status_code})"
+            except Exception as e:
+                bild_status = f"Fehler ({e})"
 
             
             payload = {
@@ -114,13 +123,11 @@ if start_button:
                 if response.status_code == 200:
                     soup = BeautifulSoup(response.content, "html.parser")
                     
-                    # --- BASIS DATEN ---
                     name = get_text(soup, "h1")
                     if " - Jetzt" in name: name = name.split(" - Jetzt")[0].strip()
                     brand = get_text(soup, "a.underline.text-neutral-700")
                     price = get_text(soup, "div.mr-2")
                     
-                    # --- HERSTELLER & ADRESSE ---
                     hersteller = get_text(soup, ".text-left.font-semibold span")
                     if hersteller == "" and brand != "":
                         hersteller = brand
@@ -146,25 +153,11 @@ if start_button:
                             pass
 
                     if hersteller_adresse == "":
-                        for script in soup.find_all("script"):
-                            text = script.string or ""
-                            if "postalCode" in text or "zipCode" in text:
-                                street_match = re.search(r'"(?:streetAddress|street|strasse)"\s*:\s*"([^"]+)"', text, re.IGNORECASE)
-                                zip_match = re.search(r'"(?:postalCode|zipCode|zip|plz)"\s*:\s*"([^"]+)"', text, re.IGNORECASE)
-                                city_match = re.search(r'"(?:addressLocality|city|ort)"\s*:\s*"([^"]+)"', text, re.IGNORECASE)
-                                
-                                if zip_match and city_match:
-                                    street = street_match.group(1) if street_match else ""
-                                    hersteller_adresse = f"{street}, {zip_match.group(1)} {city_match.group(1)}".strip(" ,")
-                                    break
-
-                    if hersteller_adresse == "":
                         full_text = soup.get_text(" ", strip=True)
                         match = re.search(r"(?:Pharmazeutischer Unternehmer|Hersteller)[\s:]*(.*?)(?:Telefon|Tel\.|Fax|E-Mail|Stand|Zu Risiken|www\.)", full_text, re.IGNORECASE)
                         if match and 5 < len(match.group(1).strip()) < 150:
                             hersteller_adresse = match.group(1).strip()
 
-                    # --- DROPDOWNS ---
                     wirkstoffe = get_text(soup, "#Wirkstoffe-content")
                     if wirkstoffe == "": wirkstoffe = get_text(soup, "div.p-0.rounded-lg")
                     dosierung = get_text(soup, "#Dosierung-content")
@@ -200,18 +193,16 @@ if start_button:
                         "Stillzeit": stillzeit,
                         "Produktbeschreibung": produktbeschreibung[:1000],
                         "Link": target_url,
-                        "Bild-Link": bild_url
+                        "Bild-Status": bild_status
                     })
                     
                 elif response.status_code == 404:
-                    results.append({"PZN": pzn, "Name": "❌ Not found", "Link": target_url, "Bild-Link": bild_url})
-                elif response.status_code == 403:
-                    results.append({"PZN": pzn, "Name": "⛔ Blocked", "Link": target_url, "Bild-Link": bild_url})
+                    results.append({"PZN": pzn, "Name": "❌ Not found", "Link": target_url, "Bild-Status": bild_status})
                 else:
-                    results.append({"PZN": pzn, "Name": f"Error {response.status_code}", "Link": target_url, "Bild-Link": bild_url})
+                    results.append({"PZN": pzn, "Name": f"Error {response.status_code}", "Link": target_url, "Bild-Status": bild_status})
 
             except Exception as e:
-                results.append({"PZN": pzn, "Name": "Error", "Link": target_url, "Hersteller": str(e), "Bild-Link": bild_url})
+                results.append({"PZN": pzn, "Name": "Error", "Link": target_url, "Hersteller": str(e), "Bild-Status": bild_status})
             
             progress_bar.progress((i + 1) / len(pzns))
             time.sleep(0.5) 
@@ -226,7 +217,7 @@ if start_button:
                 "PZN", "Name", "Hersteller", "Adresse", "Marke", "Preis", 
                 "Wirkstoffe", "Dosierung", "Anwendungsgebiete", "Anwendungshinweise",
                 "Patientenhinweise", "Nebenwirkungen", "Gegenanzeigen", "Wechselwirkungen",
-                "Warnhinweise", "Hilfsstoffe", "Stillzeit", "Produktbeschreibung", "Link", "Bild-Link"
+                "Warnhinweise", "Hilfsstoffe", "Stillzeit", "Produktbeschreibung", "Link", "Bild-Status"
             ]
             final_cols = [c for c in cols if c in df.columns]
             df = df[final_cols]
@@ -234,7 +225,6 @@ if start_button:
             st.divider()
             st.dataframe(df, use_container_width=True)
             
-            # --- ZWEI DOWNLOAD-BUTTONS (CSV & ZIP) ---
             col_csv, col_zip = st.columns(2)
             
             with col_csv:
@@ -243,7 +233,6 @@ if start_button:
                 
             with col_zip:
                 if images_to_zip:
-                    # ZIP-Datei im Arbeitsspeicher erstellen
                     zip_buffer = io.BytesIO()
                     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
                         for filename, img_data in images_to_zip.items():
