@@ -5,6 +5,8 @@ import pandas as pd
 import time
 import re
 import json
+import io
+import zipfile
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Doc Scraper", page_icon="➕", layout="wide")
@@ -30,11 +32,11 @@ if not st.session_state.authenticated:
     st.stop()
 
 # =========================================================
-#  ⬇️ MAIN TOOL (ECO MODE + CLEAN EXPORT) ⬇️
+#  ⬇️ MAIN TOOL (ECO MODE + CLEAN EXPORT + IMAGE DOWNLOAD) ⬇️
 # =========================================================
 
 st.title("➕ Doc Scraper (Eco Mode)")
-st.markdown("Fetches PZN data via ScraperAPI. Missing data will be completely blank.")
+st.markdown("Fetches PZN data via ScraperAPI and downloads product images.")
 
 default_pzns = "40554, 3161577\n18661452"
 col1, col2 = st.columns([1, 2])
@@ -80,20 +82,24 @@ if start_button:
             status_text = st.empty()
             
         results = []
+        images_to_zip = {} # NEU: Hier sammeln wir die heruntergeladenen Bilder
 
         for i, pzn in enumerate(pzns):
             target_url = f"https://www.docmorris.de/{pzn}"
             status_text.text(f"Fetching PZN {pzn} ({i+1}/{len(pzns)})...")
             
-            # --- BILD URL GENERIEREN & PRÜFEN ---
+            # --- BILD URL GENERIEREN & BILD HERUNTERLADEN ---
             bild_url = f"https://login.apopixx.de/media/image/web/750/web_schraeg/{pzn}.jpg"
             try:
-                # Wir machen nur einen HEAD-Request (lädt nicht das ganze Bild, checkt nur ob es existiert)
-                img_response = requests.head(bild_url, timeout=5)
-                if img_response.status_code != 200:
-                    bild_url = "" # Wenn das Bild nicht existiert, Feld leer lassen
+                # Wir machen einen echten GET-Request, um das Bild zu laden
+                img_response = requests.get(bild_url, timeout=10)
+                if img_response.status_code == 200:
+                    # Bild im Arbeitsspeicher für die spätere ZIP-Datei ablegen
+                    images_to_zip[f"{pzn}.jpg"] = img_response.content
+                else:
+                    bild_url = "" # Wenn das Bild nicht existiert, Feld in CSV leer lassen
             except Exception:
-                bild_url = "" # Bei Fehlern (z.B. Timeout) ebenfalls leer lassen
+                bild_url = "" # Bei Fehlern ebenfalls leer lassen
 
             
             payload = {
@@ -214,8 +220,6 @@ if start_button:
         
         if results:
             df = pd.DataFrame(results)
-            
-            # --- DIE ZAUBERZEILE: Macht alle Pandas "NaN" und "None" zu leeren Feldern ---
             df = df.fillna("")
             
             cols = [
@@ -230,5 +234,27 @@ if start_button:
             st.divider()
             st.dataframe(df, use_container_width=True)
             
-            csv = df.to_csv(index=False, sep=";", encoding="utf-8-sig").encode('utf-8-sig')
-            st.download_button(label="💾 Download CSV", data=csv, file_name="doc_clean_export.csv", mime="text/csv")
+            # --- ZWEI DOWNLOAD-BUTTONS (CSV & ZIP) ---
+            col_csv, col_zip = st.columns(2)
+            
+            with col_csv:
+                csv = df.to_csv(index=False, sep=";", encoding="utf-8-sig").encode('utf-8-sig')
+                st.download_button(label="💾 Download CSV", data=csv, file_name="doc_clean_export.csv", mime="text/csv", use_container_width=True)
+                
+            with col_zip:
+                if images_to_zip:
+                    # ZIP-Datei im Arbeitsspeicher erstellen
+                    zip_buffer = io.BytesIO()
+                    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+                        for filename, img_data in images_to_zip.items():
+                            zip_file.writestr(filename, img_data)
+                    
+                    st.download_button(
+                        label=f"📦 Download Bilder-ZIP ({len(images_to_zip)} Bilder)",
+                        data=zip_buffer.getvalue(),
+                        file_name="pzn_bilder.zip",
+                        mime="application/zip",
+                        use_container_width=True
+                    )
+                else:
+                    st.button("📦 Keine Bilder gefunden", disabled=True, use_container_width=True)
