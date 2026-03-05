@@ -111,10 +111,11 @@ if start_button:
                 bild_status = f"Fehler ({e})"
 
             
-            payload = {
+           payload = {
                 'api_key': api_key,
                 'url': target_url,
-                'country_code': 'de', 
+                'country_code': 'de',
+                'premium': 'true'  # <-- Diese neue Zeile aktiviert den VIP-Pass!
             }
             
             try:
