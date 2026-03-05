@@ -1,5 +1,5 @@
 import streamlit as st
-from curl_cffi import requests # <-- HIER IST DIE NEUE MAGIE: Die Tarnkappe!
+import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 import time
@@ -7,6 +7,18 @@ import re
 import json
 import io
 import zipfile
+import os
+
+# --- BROWSER AUTO-INSTALLATION FÜR STREAMLIT CLOUD ---
+@st.cache_resource
+def install_playwright():
+    # Zwingt den Streamlit-Server, den echten Browser im Hintergrund herunterzuladen
+    os.system("playwright install chromium")
+    os.system("playwright install-deps chromium")
+
+install_playwright()
+
+from playwright.sync_api import sync_playwright
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Doc Scraper", page_icon="➕", layout="wide")
@@ -32,11 +44,11 @@ if not st.session_state.authenticated:
     st.stop()
 
 # =========================================================
-#  ⬇️ MAIN TOOL (TARNANKE / CHROME IMPERSONATION) ⬇️
+#  ⬇️ MAIN TOOL (PLAYWRIGHT / ECHTER CLOUD-BROWSER) ⬇️
 # =========================================================
 
-st.title("➕ Doc Scraper (Tarnkappen Mode)")
-st.markdown("Fetches PZN data directly using browser impersonation (No ScraperAPI needed!).")
+st.title("➕ Doc Scraper (Playwright Mode)")
+st.markdown("Steuert einen echten Browser im Streamlit-Server, um JavaScript-Blockaden zu umgehen.")
 
 default_pzns = "40554, 3161577\n18661452"
 col1, col2 = st.columns([1, 2])
@@ -46,7 +58,6 @@ with col1:
     start_button = st.button("🚀 Fetch Data", type="primary", use_container_width=True)
 
 def get_text(soup, selector):
-    """Safely extracts text. Returns empty string if not found."""
     if not soup:
         return ""
     element = soup.select_one(selector)
@@ -71,141 +82,141 @@ if start_button:
         st.error("Please enter at least one valid PZN.")
     else:
         with col2:
-            st.info(f"Processing {len(pzns)} products...")
+            st.info(f"Processing {len(pzns)} products with Playwright...")
             progress_bar = st.progress(0)
             status_text = st.empty()
             
         results = []
         images_to_zip = {}
 
-        for i, pzn in enumerate(pzns):
-            target_url = f"https://www.docmorris.de/{pzn}"
-            status_text.text(f"Fetching PZN {pzn} ({i+1}/{len(pzns)})...")
-            
-            # --- BILD URL GENERIEREN & BILD HERUNTERLADEN ---
-            bild_url = f"https://login.apopixx.de/media/image/web/750/web_schraeg/{pzn}.jpg"
-            bild_status = "Fehlt" 
-            
-            try:
-                # Bild laden mit Tarnkappe
-                img_response = requests.get(bild_url, impersonate="chrome120", timeout=10)
-                if img_response.status_code == 200:
-                    images_to_zip[f"{pzn}.jpg"] = img_response.content
-                    bild_status = bild_url 
-                elif img_response.status_code == 404:
-                    bild_status = "Nicht gefunden (404)"
-                else:
-                    bild_status = f"Blockiert/Fehler ({img_response.status_code})"
-            except Exception as e:
-                bild_status = f"Fehler ({e})"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
 
-            # --- DIREKTER SCRAPE (OHNE SCRAPER API, MIT TARNKAPPE) ---
-            try:
-                # Hier passiert die Magie: impersonate="chrome120"
-                response = requests.get(target_url, impersonate="chrome120", timeout=30)
+        # HIER STARTET DER ECHTE BROWSER IN DER CLOUD
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True) 
+                context = browser.new_context(user_agent=headers["User-Agent"])
+                page = context.new_page()
+
+                for i, pzn in enumerate(pzns):
+                    target_url = f"https://www.docmorris.de/{pzn}"
+                    status_text.text(f"Fetching PZN {pzn} ({i+1}/{len(pzns)})...")
+                    
+                    # --- BILDER DOWNLOAD ---
+                    bild_url = f"https://login.apopixx.de/media/image/web/750/web_schraeg/{pzn}.jpg"
+                    bild_status = "Fehlt"
+                    try:
+                        img_response = requests.get(bild_url, headers=headers, timeout=10)
+                        if img_response.status_code == 200:
+                            images_to_zip[f"{pzn}.jpg"] = img_response.content
+                            bild_status = bild_url
+                        elif img_response.status_code == 404:
+                            bild_status = "Nicht gefunden (404)"
+                        else:
+                            bild_status = f"Fehler ({img_response.status_code})"
+                    except Exception as e:
+                        bild_status = f"Fehler ({e})"
+
+                    # --- DOCMORRIS MIT ECHTEM BROWSER LADEN ---
+                    try:
+                        # Gehe zur URL
+                        page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
+                        # Warte 3 Sekunden, damit DocMorris das JavaScript und die Rechenaufgabe laden kann
+                        page.wait_for_timeout(3000) 
+                        
+                        html_content = page.content()
+                        soup = BeautifulSoup(html_content, "html.parser")
+                        
+                        name = get_text(soup, "h1")
+                        if " - Jetzt" in name: name = name.split(" - Jetzt")[0].strip()
+                        brand = get_text(soup, "a.underline.text-neutral-700")
+                        price = get_text(soup, "div.mr-2")
+                        
+                        hersteller = get_text(soup, ".text-left.font-semibold span")
+                        if hersteller == "" and brand != "":
+                            hersteller = brand
+
+                        hersteller_adresse = ""
+                        for script in soup.find_all("script", type="application/ld+json"):
+                            try:
+                                data = json.loads(script.string)
+                                items = data if isinstance(data, list) else [data]
+                                for item in items:
+                                    if "Product" in item.get("@type", ""):
+                                        manuf = item.get("manufacturer", {})
+                                        if isinstance(manuf, dict):
+                                            addr = manuf.get("address", {})
+                                            if isinstance(addr, dict):
+                                                street = addr.get("streetAddress", "")
+                                                zip_code = addr.get("postalCode", "")
+                                                city = addr.get("addressLocality", "")
+                                                if zip_code or city:
+                                                    hersteller_adresse = f"{street}, {zip_code} {city}".strip(" ,")
+                                                    break
+                            except Exception:
+                                pass
+
+                        if hersteller_adresse == "":
+                            for script in soup.find_all("script"):
+                                text = script.string or ""
+                                if "postalCode" in text or "zipCode" in text:
+                                    street_match = re.search(r'"(?:streetAddress|street|strasse)"\s*:\s*"([^"]+)"', text, re.IGNORECASE)
+                                    zip_match = re.search(r'"(?:postalCode|zipCode|zip|plz)"\s*:\s*"([^"]+)"', text, re.IGNORECASE)
+                                    city_match = re.search(r'"(?:addressLocality|city|ort)"\s*:\s*"([^"]+)"', text, re.IGNORECASE)
+                                    
+                                    if zip_match and city_match:
+                                        street = street_match.group(1) if street_match else ""
+                                        hersteller_adresse = f"{street}, {zip_match.group(1)} {city_match.group(1)}".strip(" ,")
+                                        break
+
+                        if hersteller_adresse == "":
+                            full_text = soup.get_text(" ", strip=True)
+                            match = re.search(r"(?:Pharmazeutischer Unternehmer|Hersteller)[\s:]*(.*?)(?:Telefon|Tel\.|Fax|E-Mail|Stand|Zu Risiken|www\.)", full_text, re.IGNORECASE)
+                            if match and 5 < len(match.group(1).strip()) < 150:
+                                hersteller_adresse = match.group(1).strip()
+
+                        wirkstoffe = get_text(soup, "#Wirkstoffe-content")
+                        if wirkstoffe == "": wirkstoffe = get_text(soup, "div.p-0.rounded-lg")
+                        dosierung = get_text(soup, "#Dosierung-content")
+                        nebenwirkungen = get_text(soup, "#Nebenwirkungen-content")
+                        gegenanzeigen = get_text(soup, "#Gegenanzeigen-content")
+                        hilfsstoffe = get_text(soup, "#Hilfsstoffe-content")
+                        warnhinweise = get_text(soup, "#WarnhinweiseHilfsstoffe-content")
+                        wechselwirkungen = get_text(soup, "#Wechselwirkungen-content")
+                        anwendungsgebiete = get_text(soup, "#Anwendungsgebiete-content")
+                        anwendungshinweise = get_text(soup, "#Anwendungshinweise-content")
+                        patientenhinweise = get_text(soup, "#Patientenhinweise-content")
+                        stillzeit = get_text(soup, "#Stillzeit-content")
+                        if stillzeit == "": stillzeit = get_text(soup, ".rounded-lg span > ul")
+                        produktbeschreibung = get_text(soup, "div.innerHtml")
+
+                        # Prüfen, ob der Türsteher uns trotzdem erwischt hat
+                        if name == "" and "404" in page.title():
+                            results.append({"PZN": pzn, "Name": "❌ Not found", "Link": target_url, "Bild-Status": bild_status})
+                        elif "Access Denied" in page.title() or "Cloudflare" in html_content or "Just a moment" in html_content:
+                            results.append({"PZN": pzn, "Name": "⛔ Blockiert (Rechenzentrum-IP erkannt)", "Link": target_url, "Bild-Status": bild_status})
+                        else:
+                            results.append({
+                                "PZN": pzn, "Name": name, "Hersteller": hersteller, "Adresse": hersteller_adresse,
+                                "Marke": brand, "Preis": price, "Wirkstoffe": wirkstoffe, "Dosierung": dosierung,
+                                "Anwendungsgebiete": anwendungsgebiete, "Anwendungshinweise": anwendungshinweise,
+                                "Patientenhinweise": patientenhinweise, "Nebenwirkungen": nebenwirkungen,
+                                "Gegenanzeigen": gegenanzeigen, "Wechselwirkungen": wechselwirkungen,
+                                "Warnhinweise": warnhinweise, "Hilfsstoffe": hilfsstoffe, "Stillzeit": stillzeit,
+                                "Produktbeschreibung": produktbeschreibung[:1000], "Link": target_url, "Bild-Status": bild_status
+                            })
+
+                    except Exception as e:
+                        results.append({"PZN": pzn, "Name": f"Error: {str(e)[:50]}", "Link": target_url, "Bild-Status": bild_status})
+                    
+                    progress_bar.progress((i + 1) / len(pzns))
                 
-                if response.status_code == 200:
-                    soup = BeautifulSoup(response.content, "html.parser")
-                    
-                    name = get_text(soup, "h1")
-                    if " - Jetzt" in name: name = name.split(" - Jetzt")[0].strip()
-                    brand = get_text(soup, "a.underline.text-neutral-700")
-                    price = get_text(soup, "div.mr-2")
-                    
-                    hersteller = get_text(soup, ".text-left.font-semibold span")
-                    if hersteller == "" and brand != "":
-                        hersteller = brand
+                browser.close()
 
-                    hersteller_adresse = ""
-                    for script in soup.find_all("script", type="application/ld+json"):
-                        try:
-                            data = json.loads(script.string)
-                            items = data if isinstance(data, list) else [data]
-                            for item in items:
-                                if "Product" in item.get("@type", ""):
-                                    manuf = item.get("manufacturer", {})
-                                    if isinstance(manuf, dict):
-                                        addr = manuf.get("address", {})
-                                        if isinstance(addr, dict):
-                                            street = addr.get("streetAddress", "")
-                                            zip_code = addr.get("postalCode", "")
-                                            city = addr.get("addressLocality", "")
-                                            if zip_code or city:
-                                                hersteller_adresse = f"{street}, {zip_code} {city}".strip(" ,")
-                                                break
-                        except Exception:
-                            pass
-
-                    if hersteller_adresse == "":
-                        for script in soup.find_all("script"):
-                            text = script.string or ""
-                            if "postalCode" in text or "zipCode" in text:
-                                street_match = re.search(r'"(?:streetAddress|street|strasse)"\s*:\s*"([^"]+)"', text, re.IGNORECASE)
-                                zip_match = re.search(r'"(?:postalCode|zipCode|zip|plz)"\s*:\s*"([^"]+)"', text, re.IGNORECASE)
-                                city_match = re.search(r'"(?:addressLocality|city|ort)"\s*:\s*"([^"]+)"', text, re.IGNORECASE)
-                                
-                                if zip_match and city_match:
-                                    street = street_match.group(1) if street_match else ""
-                                    hersteller_adresse = f"{street}, {zip_match.group(1)} {city_match.group(1)}".strip(" ,")
-                                    break
-
-                    if hersteller_adresse == "":
-                        full_text = soup.get_text(" ", strip=True)
-                        match = re.search(r"(?:Pharmazeutischer Unternehmer|Hersteller)[\s:]*(.*?)(?:Telefon|Tel\.|Fax|E-Mail|Stand|Zu Risiken|www\.)", full_text, re.IGNORECASE)
-                        if match and 5 < len(match.group(1).strip()) < 150:
-                            hersteller_adresse = match.group(1).strip()
-
-                    wirkstoffe = get_text(soup, "#Wirkstoffe-content")
-                    if wirkstoffe == "": wirkstoffe = get_text(soup, "div.p-0.rounded-lg")
-                    dosierung = get_text(soup, "#Dosierung-content")
-                    nebenwirkungen = get_text(soup, "#Nebenwirkungen-content")
-                    gegenanzeigen = get_text(soup, "#Gegenanzeigen-content")
-                    hilfsstoffe = get_text(soup, "#Hilfsstoffe-content")
-                    warnhinweise = get_text(soup, "#WarnhinweiseHilfsstoffe-content")
-                    wechselwirkungen = get_text(soup, "#Wechselwirkungen-content")
-                    anwendungsgebiete = get_text(soup, "#Anwendungsgebiete-content")
-                    anwendungshinweise = get_text(soup, "#Anwendungshinweise-content")
-                    patientenhinweise = get_text(soup, "#Patientenhinweise-content")
-                    stillzeit = get_text(soup, "#Stillzeit-content")
-                    if stillzeit == "": stillzeit = get_text(soup, ".rounded-lg span > ul")
-                    produktbeschreibung = get_text(soup, "div.innerHtml")
-
-                    results.append({
-                        "PZN": pzn,
-                        "Name": name,
-                        "Hersteller": hersteller,
-                        "Adresse": hersteller_adresse,
-                        "Marke": brand,
-                        "Preis": price,
-                        "Wirkstoffe": wirkstoffe,
-                        "Dosierung": dosierung,
-                        "Anwendungsgebiete": anwendungsgebiete,
-                        "Anwendungshinweise": anwendungshinweise,
-                        "Patientenhinweise": patientenhinweise,
-                        "Nebenwirkungen": nebenwirkungen,
-                        "Gegenanzeigen": gegenanzeigen,
-                        "Wechselwirkungen": wechselwirkungen,
-                        "Warnhinweise": warnhinweise,
-                        "Hilfsstoffe": hilfsstoffe,
-                        "Stillzeit": stillzeit,
-                        "Produktbeschreibung": produktbeschreibung[:1000],
-                        "Link": target_url,
-                        "Bild-Status": bild_status
-                    })
-                    
-                elif response.status_code == 404:
-                    results.append({"PZN": pzn, "Name": "❌ Not found", "Link": target_url, "Bild-Status": bild_status})
-                elif response.status_code == 403:
-                    results.append({"PZN": pzn, "Name": "⛔ 403 Blockiert: DocMorris hat uns erwischt!", "Link": target_url, "Bild-Status": bild_status})
-                else:
-                    results.append({"PZN": pzn, "Name": f"Error {response.status_code}", "Link": target_url, "Bild-Status": bild_status})
-
-            except Exception as e:
-                results.append({"PZN": pzn, "Name": "Error", "Link": target_url, "Hersteller": str(e), "Bild-Status": bild_status})
-            
-            progress_bar.progress((i + 1) / len(pzns))
-            # Wir warten 1 Sekunde zwischen Anfragen, um menschlicher zu wirken!
-            time.sleep(1) 
+        except Exception as main_e:
+            st.error(f"Kritischer Fehler beim Starten des Browsers: {main_e}")
 
         status_text.text("✅ Finished!")
         
