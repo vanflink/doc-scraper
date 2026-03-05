@@ -1,5 +1,5 @@
 import streamlit as st
-import requests
+from curl_cffi import requests # <-- HIER IST DIE NEUE MAGIE: Die Tarnkappe!
 from bs4 import BeautifulSoup
 import pandas as pd
 import time
@@ -32,11 +32,11 @@ if not st.session_state.authenticated:
     st.stop()
 
 # =========================================================
-#  ⬇️ MAIN TOOL (PREMIUM MODE + CLEAN EXPORT + BILDER) ⬇️
+#  ⬇️ MAIN TOOL (TARNANKE / CHROME IMPERSONATION) ⬇️
 # =========================================================
 
-st.title("➕ Doc Scraper (Premium Mode)")
-st.markdown("Fetches PZN data via ScraperAPI (Premium) and downloads product images.")
+st.title("➕ Doc Scraper (Tarnkappen Mode)")
+st.markdown("Fetches PZN data directly using browser impersonation (No ScraperAPI needed!).")
 
 default_pzns = "40554, 3161577\n18661452"
 col1, col2 = st.columns([1, 2])
@@ -55,12 +55,6 @@ def get_text(soup, selector):
     return ""
 
 if start_button:
-    try:
-        api_key = st.secrets["scraper_api_key"]
-    except KeyError:
-        st.error("🚨 API Key missing! Add 'scraper_api_key' to Secrets.")
-        st.stop()
-
     normalized_input = pzn_input.replace(',', '\n')
     raw_lines = [line.strip() for line in normalized_input.split('\n') if line.strip()]
     
@@ -84,25 +78,20 @@ if start_button:
         results = []
         images_to_zip = {}
 
-        # Browser-Tarnung für den Bilder-Download
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
-
         for i, pzn in enumerate(pzns):
             target_url = f"https://www.docmorris.de/{pzn}"
             status_text.text(f"Fetching PZN {pzn} ({i+1}/{len(pzns)})...")
             
             # --- BILD URL GENERIEREN & BILD HERUNTERLADEN ---
             bild_url = f"https://login.apopixx.de/media/image/web/750/web_schraeg/{pzn}.jpg"
-            bild_status = "Fehlt" # Standardwert für unsere Tabelle
+            bild_status = "Fehlt" 
             
             try:
-                # Mit getarntem Header anfragen
-                img_response = requests.get(bild_url, headers=headers, timeout=10)
+                # Bild laden mit Tarnkappe
+                img_response = requests.get(bild_url, impersonate="chrome120", timeout=10)
                 if img_response.status_code == 200:
                     images_to_zip[f"{pzn}.jpg"] = img_response.content
-                    bild_status = bild_url # Wenn erfolgreich, URL in die Tabelle packen
+                    bild_status = bild_url 
                 elif img_response.status_code == 404:
                     bild_status = "Nicht gefunden (404)"
                 else:
@@ -110,16 +99,10 @@ if start_button:
             except Exception as e:
                 bild_status = f"Fehler ({e})"
 
-            # --- SCRAPER API PAYLOAD (MIT PREMIUM VIP PASS) ---
-            payload = {
-                'api_key': api_key,
-                'url': target_url,
-                'country_code': 'de', 
-                'premium': 'true'
-            }
-            
+            # --- DIREKTER SCRAPE (OHNE SCRAPER API, MIT TARNKAPPE) ---
             try:
-                response = requests.get('http://api.scraperapi.com', params=payload, timeout=60)
+                # Hier passiert die Magie: impersonate="chrome120"
+                response = requests.get(target_url, impersonate="chrome120", timeout=30)
                 
                 if response.status_code == 200:
                     soup = BeautifulSoup(response.content, "html.parser")
@@ -213,9 +196,7 @@ if start_button:
                 elif response.status_code == 404:
                     results.append({"PZN": pzn, "Name": "❌ Not found", "Link": target_url, "Bild-Status": bild_status})
                 elif response.status_code == 403:
-                    # HIER IST DER NEUE SPION: Wir lesen den Grund für die Blockade aus!
-                    grund = response.text[:120] 
-                    results.append({"PZN": pzn, "Name": f"⛔ 403 Blockiert: {grund}", "Link": target_url, "Bild-Status": bild_status})
+                    results.append({"PZN": pzn, "Name": "⛔ 403 Blockiert: DocMorris hat uns erwischt!", "Link": target_url, "Bild-Status": bild_status})
                 else:
                     results.append({"PZN": pzn, "Name": f"Error {response.status_code}", "Link": target_url, "Bild-Status": bild_status})
 
@@ -223,14 +204,13 @@ if start_button:
                 results.append({"PZN": pzn, "Name": "Error", "Link": target_url, "Hersteller": str(e), "Bild-Status": bild_status})
             
             progress_bar.progress((i + 1) / len(pzns))
-            time.sleep(0.5) 
+            # Wir warten 1 Sekunde zwischen Anfragen, um menschlicher zu wirken!
+            time.sleep(1) 
 
         status_text.text("✅ Finished!")
         
         if results:
             df = pd.DataFrame(results)
-            
-            # Beseitigt die "None" und "NaN" Werte wieder
             df = df.fillna("")
             
             cols = [
