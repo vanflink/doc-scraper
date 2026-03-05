@@ -212,6 +212,10 @@ if start_button:
                     
                 elif response.status_code == 404:
                     results.append({"PZN": pzn, "Name": "❌ Not found", "Link": target_url, "Bild-Status": bild_status})
+                elif response.status_code == 403:
+                    # HIER IST DER NEUE SPION: Wir lesen den Grund für die Blockade aus!
+                    grund = response.text[:120] 
+                    results.append({"PZN": pzn, "Name": f"⛔ 403 Blockiert: {grund}", "Link": target_url, "Bild-Status": bild_status})
                 else:
                     results.append({"PZN": pzn, "Name": f"Error {response.status_code}", "Link": target_url, "Bild-Status": bild_status})
 
