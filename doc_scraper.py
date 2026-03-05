@@ -32,11 +32,11 @@ if not st.session_state.authenticated:
     st.stop()
 
 # =========================================================
-#  ⬇️ MAIN TOOL (ECO MODE + CLEAN EXPORT + IMAGE DOWNLOAD) ⬇️
+#  ⬇️ MAIN TOOL (PREMIUM MODE + CLEAN EXPORT + BILDER) ⬇️
 # =========================================================
 
-st.title("➕ Doc Scraper (Eco Mode)")
-st.markdown("Fetches PZN data via ScraperAPI and downloads product images.")
+st.title("➕ Doc Scraper (Premium Mode)")
+st.markdown("Fetches PZN data via ScraperAPI (Premium) and downloads product images.")
 
 default_pzns = "40554, 3161577\n18661452"
 col1, col2 = st.columns([1, 2])
@@ -110,12 +110,12 @@ if start_button:
             except Exception as e:
                 bild_status = f"Fehler ({e})"
 
-            
-           payload = {
+            # --- SCRAPER API PAYLOAD (MIT PREMIUM VIP PASS) ---
+            payload = {
                 'api_key': api_key,
                 'url': target_url,
-                'country_code': 'de',
-                'premium': 'true'  # <-- Diese neue Zeile aktiviert den VIP-Pass!
+                'country_code': 'de', 
+                'premium': 'true'
             }
             
             try:
@@ -152,6 +152,19 @@ if start_button:
                                                 break
                         except Exception:
                             pass
+
+                    if hersteller_adresse == "":
+                        for script in soup.find_all("script"):
+                            text = script.string or ""
+                            if "postalCode" in text or "zipCode" in text:
+                                street_match = re.search(r'"(?:streetAddress|street|strasse)"\s*:\s*"([^"]+)"', text, re.IGNORECASE)
+                                zip_match = re.search(r'"(?:postalCode|zipCode|zip|plz)"\s*:\s*"([^"]+)"', text, re.IGNORECASE)
+                                city_match = re.search(r'"(?:addressLocality|city|ort)"\s*:\s*"([^"]+)"', text, re.IGNORECASE)
+                                
+                                if zip_match and city_match:
+                                    street = street_match.group(1) if street_match else ""
+                                    hersteller_adresse = f"{street}, {zip_match.group(1)} {city_match.group(1)}".strip(" ,")
+                                    break
 
                     if hersteller_adresse == "":
                         full_text = soup.get_text(" ", strip=True)
@@ -212,6 +225,8 @@ if start_button:
         
         if results:
             df = pd.DataFrame(results)
+            
+            # Beseitigt die "None" und "NaN" Werte wieder
             df = df.fillna("")
             
             cols = [
